@@ -1,0 +1,36 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Klassengeld",
+        "description": "Zugangsdaten von klassengeld.app (Erziehungsberechtigte).",
+        "data": { "username": "Benutzer", "password": "Passwort" }
+      },
+      "reauth_confirm": {
+        "title": "Erneut anmelden",
+        "description": "Das Passwort für {username} funktioniert nicht mehr. Bitte neu eingeben.",
+        "data": { "password": "Passwort" }
+      }
+    },
+    "error": {
+      "invalid_auth": "Benutzer oder Passwort falsch.",
+      "cannot_connect": "klassengeld.app ist nicht erreichbar oder das Login-Formular wurde nicht erkannt.",
+      "unknown": "Unerwarteter Fehler."
+    },
+    "abort": {
+      "already_configured": "Dieser Benutzer ist bereits eingerichtet.",
+      "reauth_successful": "Neu angemeldet."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "balance": { "name": "Kontostand" },
+      "open_amount": { "name": "Offener Betrag" },
+      "open_count": { "name": "Offene Zahlungen" },
+      "next_due": { "name": "Nächste Frist" }
+    },
+    "binary_sensor": {
+      "payment_due": { "name": "Zahlung offen" }
+    }
+  }
+}

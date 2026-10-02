@@ -1,0 +1,36 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Klassengeld",
+        "description": "Credentials for klassengeld.app (parent account).",
+        "data": { "username": "Username", "password": "Password" }
+      },
+      "reauth_confirm": {
+        "title": "Sign in again",
+        "description": "The password for {username} no longer works. Please enter it again.",
+        "data": { "password": "Password" }
+      }
+    },
+    "error": {
+      "invalid_auth": "Wrong username or password.",
+      "cannot_connect": "klassengeld.app is unreachable or the login form was not recognised.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "This user is already configured.",
+      "reauth_successful": "Signed in again."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "balance": { "name": "Account balance" },
+      "open_amount": { "name": "Open amount" },
+      "open_count": { "name": "Open payments" },
+      "next_due": { "name": "Next due date" }
+    },
+    "binary_sensor": {
+      "payment_due": { "name": "Payment due" }
+    }
+  }
+}
