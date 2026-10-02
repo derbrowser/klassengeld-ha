@@ -57,8 +57,12 @@ class KlassengeldClient:
                 headers={"Referer": page_url, "Origin": BASE_URL},
                 timeout=TIMEOUT,
             ) as resp:
-                if resp.status >= 500:
-                    raise KlassengeldConnectionError(f"Serverfehler {resp.status}")
+                if resp.status == 419:
+                    raise KlassengeldConnectionError(
+                        "Login abgelehnt (419, CSRF-Token/Sitzung abgelaufen)"
+                    )
+                if resp.status >= 400:
+                    raise KlassengeldConnectionError(f"Login-Antwort HTTP {resp.status}")
                 result = await resp.text()
 
             if is_login_page(result):
@@ -91,4 +95,27 @@ class KlassengeldClient:
                 "Keine Daten im Dashboard erkannt (Layout geändert?). "
                 "Diagnose-Download der Integration enthält den Seitentext."
             )
+        for s in students:
+            _LOGGER.debug(
+                "Gelesen: %s, Kontostand=%s, %d Zahlungen (%d offen)",
+                s.name,
+                s.balance,
+                len(s.payments),
+                len(s.open_payments),
+            )
+            if s.balance is None:
+                _LOGGER.warning(
+                    "Kontostand für %s nicht gefunden – Seitenlayout geändert? "
+                    "Bitte Diagnose-Download der Integration anhängen.",
+                    s.name,
+                )
+            for p in s.payments:
+                if p.status == "unknown" or p.due is None or p.amount is None:
+                    _LOGGER.warning(
+                        "Zahlung '%s' unvollständig gelesen (Status=%s, Frist=%s, Betrag=%s)",
+                        p.title,
+                        p.status,
+                        p.due,
+                        p.amount,
+                    )
         return students

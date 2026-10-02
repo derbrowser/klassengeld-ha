@@ -22,8 +22,37 @@ STUDENT_RE = re.compile(
 PROJECT_RE = re.compile(
     r"^\d+\.\s*Projekt\s*[\"„“]?(?P<title>.*?)[\"“”]?\s*$", re.IGNORECASE
 )
-DUE_RE = re.compile(r"Frist:\s*(?P<d>\d{1,2}\.\d{1,2}\.\d{4})", re.IGNORECASE)
-OPEN_HINTS = ("zu bezahlen", "offen", "nicht bezahlt", "überfällig", "unbezahlt")
+DATE_RE = re.compile(r"(?P<d>\d{1,2}\.\d{1,2}\.\d{4})")
+OPEN_HINTS = (
+    "zu bezahlen",
+    "offen",
+    "nicht bezahlt",
+    "überfällig",
+    "unbezahlt",
+    "teilweise",
+)
+
+
+def _amount_only(line: str) -> bool:
+    """True, wenn die Zeile nur aus einem Betrag besteht ('210,00 €')."""
+    return AMOUNT_RE.fullmatch(line.strip()) is not None
+
+
+def _find_date(lines: list[str], start: int) -> date | None:
+    """Datum in Zeile start oder den nächsten drei Zeilen suchen.
+
+    Auf der echten Seite steht die Frist auf mehreren Zeilen:
+    'Frist:' / '{20261008}' / '08.10.2026'.
+    """
+    for j in range(start, min(start + 4, len(lines))):
+        if j > start and PROJECT_RE.match(lines[j]):
+            return None  # nächstes Projekt beginnt, keine Frist gefunden
+        if m := DATE_RE.search(lines[j]):
+            try:
+                return datetime.strptime(m.group("d"), "%d.%m.%Y").date()
+            except ValueError:
+                return None
+    return None
 
 
 @dataclass
@@ -151,10 +180,12 @@ def parse_dashboard(html: str) -> list[Student]:
 
         elif line.lower().startswith("kontostand"):
             bal = parse_amount(line)
-            if bal is None and i + 1 < len(lines):
+            # Auf der echten Seite steht der Betrag VOR dem Label ('210,00 €' / 'Kontostand')
+            if bal is None and i > 0 and _amount_only(lines[i - 1]):
+                bal = parse_amount(lines[i - 1])
+            if bal is None and i + 1 < len(lines) and _amount_only(lines[i + 1]):
                 bal = parse_amount(lines[i + 1])
-                if bal is not None:
-                    i += 1
+                i += 1
             ensure_student().balance = bal
 
         elif m := PROJECT_RE.match(line):
@@ -162,13 +193,13 @@ def parse_dashboard(html: str) -> list[Student]:
             ensure_student().payments.append(payment)
 
         elif payment is not None:
-            if m := DUE_RE.search(line):
-                try:
-                    payment.due = datetime.strptime(m.group("d"), "%d.%m.%Y").date()
-                except ValueError:
-                    pass
+            if line.lower().startswith("frist"):
+                payment.due = _find_date(lines, i)
             elif line.lower().startswith("betrag"):
-                payment.amount = parse_amount(line)
+                amount = parse_amount(line)
+                if amount is None and i + 1 < len(lines) and _amount_only(lines[i + 1]):
+                    amount = parse_amount(lines[i + 1])
+                payment.amount = amount
             elif not payment.status_text and len(line) < 40:
                 low = line.lower()
                 if any(h in low for h in OPEN_HINTS):

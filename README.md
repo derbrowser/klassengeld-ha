@@ -2,7 +2,9 @@
 
 Zeigt Kontostand und offene Zahlungsaufforderungen von [klassengeld.app](https://klassengeld.app) in Home Assistant an. Pro Kind wird ein Gerät angelegt.
 
-> **Stand:** Der Parser wurde anhand eines Screenshots des Dashboards gebaut und mit Beispiel-HTML getestet, aber noch nicht gegen die echte Seite. Siehe "Wenn etwas nicht klappt".
+> **Stand:** Der Parser wurde gegen den echten Seitenaufbau des Dashboards geprüft (Betrag vor dem Label "Kontostand", Frist auf mehreren Zeilen) und in einem echten Home Assistant getestet. Siehe "Wenn etwas nicht klappt".
+
+Die Entitäts-IDs richten sich nach der Sprache deiner Home-Assistant-Installation, auf Deutsch z. B. `sensor.max_mustermann_kontostand`.
 
 ## Installation
 
