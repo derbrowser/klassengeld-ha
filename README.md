@@ -72,3 +72,11 @@ actions:
 
 - "Alle Transaktionen anzeigen" wird noch nicht gelesen (Seite unbekannt).
 - Das Passwort liegt, wie bei allen Integrationen mit Login, im Klartext in `.storage/core.config_entries`. Am besten ein Passwort verwenden, das du nirgends sonst nutzt.
+
+## Hinweis
+
+Dies ist ein inoffizielles, privates Projekt und steht in keiner Verbindung zu klassengeld.app oder deren Betreibern. Die Integration meldet sich mit deinen eigenen Zugangsdaten an und liest nur die Daten, die du selbst im Dashboard siehst. Bitte beachte die Nutzungsbedingungen von klassengeld.app, die Nutzung erfolgt auf eigene Verantwortung. Das Seitenlayout kann sich jederzeit ändern, dann muss der Parser angepasst werden.
+
+## Lizenz
+
+[MIT](LICENSE)
