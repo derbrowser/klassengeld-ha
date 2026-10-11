@@ -6,5 +6,6 @@ DOMAIN = "klassengeld"
 BASE_URL = "https://klassengeld.app"
 LOGIN_URL = f"{BASE_URL}/login"
 DASHBOARD_URL = f"{BASE_URL}/dashboard"
+SALDO_URL = BASE_URL + "/ajax/saldo_account/{}"  # Fenster "Alle Transaktionen anzeigen"
 SCAN_INTERVAL = timedelta(minutes=30)
 CURRENCY = "EUR"

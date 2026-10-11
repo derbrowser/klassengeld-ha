@@ -57,17 +57,19 @@ def projects_attr(student: Student) -> dict[str, Any]:
 
 
 def transactions_attr(student: Student) -> dict[str, Any]:
-    """Alle Transaktionen, wie auf der Seite gelesen (Reihenfolge der Seite)."""
+    """Alle Transaktionen (neueste zuerst) und reservierte Beträge."""
     txs = student.transactions
     return {
         "income": round(sum(t.amount for t in txs if t.amount and t.amount > 0), 2),
         "expenses": round(sum(t.amount for t in txs if t.amount and t.amount < 0), 2),
+        "unassigned_amount": student.unassigned_amount,
+        "reserved": [{"label": r.label, "amount": r.amount} for r in student.reserved],
         "transactions": [
             {
                 "date": t.date.isoformat() if t.date else None,
-                "title": t.title,
+                "type": t.kind,
                 "amount": t.amount,
-                "note": t.note,
+                "description": t.description,
             }
             for t in txs
         ],
@@ -164,7 +166,7 @@ async def async_setup_entry(
 class KlassengeldSensor(KlassengeldEntity, SensorEntity):
     entity_description: KlassengeldSensorDescription
     # Lange Listen nicht in die Recorder-Datenbank schreiben (Limit 16 KB pro Zustand)
-    _unrecorded_attributes = frozenset({"projects", "transactions", "payments"})
+    _unrecorded_attributes = frozenset({"projects", "transactions", "reserved", "payments"})
 
     def __init__(self, coordinator, student_key, description) -> None:
         super().__init__(coordinator, student_key, description.key)

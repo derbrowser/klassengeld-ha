@@ -8,9 +8,11 @@ zeilenweise und erkennt Muster wie "Kontostand", "Projekt ...", "Frist:",
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from typing import Any
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
@@ -23,6 +25,10 @@ PROJECT_RE = re.compile(
     r"^\d+\.\s*Projekt\s*[\"„“]?(?P<title>.*?)[\"“”]?\s*$", re.IGNORECASE
 )
 DATE_RE = re.compile(r"(?P<d>\d{1,2}\.\d{1,2}\.\d{4})")
+SALDO_RE = re.compile(r"show_saldo_info\((\d+)\)")  # onclick von "Alle Transaktionen anzeigen"
+TABLEDATA_RE = re.compile(r"var\s+tabledata_\w+\s*=\s*")
+PLAIN_NUM_RE = re.compile(r"^[-+−–]?\s*\d+(?:[.,]\d+)?$")
+IBAN_RE = re.compile(r"\b([A-Z]{2}\d{2})[A-Z0-9]{11,30}\b")
 OPEN_HINTS = (
     "zu bezahlen",
     "offen",
@@ -68,12 +74,20 @@ class Payment:
 
 @dataclass
 class Transaction:
-    """Eine Buchung aus "Alle Transaktionen anzeigen"."""
+    """Eine Buchung aus "Alle Transaktionen anzeigen" (Schülerkonto)."""
 
     date: date | None = None
-    title: str = ""
+    kind: str = ""  # z. B. "Banküberweisung", "Transfer in Projekt"
+    description: str = ""
+    amount: float | None = None  # positiv = Einzahlung, negativ = Abbuchung
+
+
+@dataclass
+class Reserved:
+    """Zeile aus "Reservierte Beträge" (z. B. "nicht zugeordnete Summe")."""
+
+    label: str
     amount: float | None = None
-    note: str = ""
 
 
 @dataclass
@@ -85,7 +99,9 @@ class Student:
     school: str | None = None
     balance: float | None = None
     payments: list[Payment] = field(default_factory=list)
+    account_id: str | None = None  # ID für /ajax/saldo_account/<id>
     transactions: list[Transaction] = field(default_factory=list)
+    reserved: list[Reserved] = field(default_factory=list)
 
     @property
     def open_payments(self) -> list[Payment]:
@@ -94,6 +110,14 @@ class Student:
     @property
     def paid_payments(self) -> list[Payment]:
         return [p for p in self.payments if p.status == "paid"]
+
+    @property
+    def unassigned_amount(self) -> float | None:
+        """"nicht zugeordnete Summe" aus den reservierten Beträgen."""
+        for r in self.reserved:
+            if "nicht zugeordnet" in r.label.lower():
+                return r.amount
+        return None
 
 
 def parse_amount(text: str) -> float | None:
@@ -166,83 +190,91 @@ def page_lines(html: str) -> list[str]:
     return _page_lines(html)
 
 
-NEXT_PAGE_TEXTS = ("nächste", "naechste", "weiter", "next", "›", "»", ">")
+def mask_iban(text: str) -> str:
+    """IBANs kürzen ('DE83…'), damit sie nicht in Attributen oder Diagnosen landen."""
+    return IBAN_RE.sub(r"\1…", text)
 
 
-def find_transaction_links(html: str, page_url: str) -> list[str]:
-    """Links zu "Alle Transaktionen anzeigen" im Dashboard (in Seitenreihenfolge)."""
-    soup = BeautifulSoup(html, "html.parser")
-    links: list[str] = []
-    for a in soup.find_all("a", href=True):
-        href = a["href"].strip()
-        if href.startswith(("#", "javascript:", "mailto:")):
-            continue
-        if "transaktion" not in a.get_text(" ", strip=True).lower():
-            continue
-        url = urljoin(page_url, href)
-        if url not in links:
-            links.append(url)
-    return links
+def mask_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Rohzeilen für die Diagnose: IBANs maskiert."""
+    return json.loads(mask_iban(json.dumps(rows, ensure_ascii=False)))
 
 
-def find_next_page(html: str, page_url: str) -> str | None:
-    """Link zur nächsten Seite einer paginierten Transaktionsliste (oder None)."""
-    soup = BeautifulSoup(html, "html.parser")
-    a = soup.select_one("a[rel~=next][href]")
-    if a is None:
-        for cand in soup.find_all("a", href=True):
-            text = cand.get_text(" ", strip=True).lower()
-            if text in NEXT_PAGE_TEXTS and not cand["href"].startswith(("#", "javascript:")):
-                a = cand
-                break
-    if a is None:
-        return None
-    return urljoin(page_url, a["href"].strip())
+def _plain(value: Any) -> str:
+    """HTML-Fragment -> reiner Text."""
+    text = BeautifulSoup(str(value or ""), "html.parser").get_text(" ")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _amount_value(text: str) -> float | None:
+    """'-160.00' / '50,00' / '50,00 €' -> float."""
+    t = text.strip()
+    if PLAIN_NUM_RE.match(t):
+        num = float(t.lstrip("+-−– ").replace(",", "."))
+        return -num if t[0] in "-−–" else num
+    return parse_amount(t)
+
+
+def extract_tabledata(html: str) -> list[dict[str, Any]]:
+    """Zeilen der DevExtreme-Tabelle ('var tabledata_… = [...]') aus dem Skript lesen."""
+    m = TABLEDATA_RE.search(html)
+    if m is None:
+        return []
+    try:
+        data, _ = json.JSONDecoder().raw_decode(html, m.end())
+    except ValueError:
+        return []
+    return [r for r in data if isinstance(r, dict)] if isinstance(data, list) else []
 
 
 def parse_transactions(html: str) -> list[Transaction]:
-    """Transaktionsliste -> Buchungen.
+    """Antwort von /ajax/saldo_account/<id> -> Buchungen (neueste zuerst, wie auf der Seite).
 
-    Textbasiert wie das Dashboard: Jede Zeile mit einem Datum (TT.MM.JJJJ) beginnt
-    eine Buchung. Betrag und Beschreibung stehen in derselben oder den folgenden
-    Zeilen (höchstens vier), bis das nächste Datum kommt.
+    Spalten der Tabelle: 0 Richtungs-Icon, 1 Datum, 2 Betrag (mit Vorzeichen),
+    3 Art, 4 Beschreibung, 5 Schüler.
     """
-    lines = _page_lines(html)
     result: list[Transaction] = []
-    current: Transaction | None = None
-    extra = 0
+    for row in extract_tabledata(html):
+        def cell(i: int) -> str:
+            return _plain(row.get(f"fieldtxt{i}") or row.get(f"field{i}"))
 
-    for line in lines:
-        if line.lower().startswith("frist"):
-            continue
-        m = DATE_RE.search(line)
-        if m:
-            try:
-                d = datetime.strptime(m.group("d"), "%d.%m.%Y").date()
-            except ValueError:
-                d = None
-            current = Transaction(date=d)
-            result.append(current)
-            extra = 0
-            text = (line[: m.start()] + " " + line[m.end() :]).strip(" -–|·+")
-        elif current is not None and extra < 4:
-            extra += 1
-            low = line.lower()
-            if low in NEXT_PAGE_TEXTS or low.startswith(("zurück", "vorherige", "seite ")):
-                continue  # Pagination, keine Buchungsdaten
-            text = line
-        else:
-            continue
+        m = DATE_RE.search(cell(1))
+        try:
+            d = datetime.strptime(m.group("d"), "%d.%m.%Y").date() if m else None
+        except ValueError:
+            d = None
+        result.append(
+            Transaction(
+                date=d,
+                kind=cell(3),
+                description=mask_iban(cell(4)),
+                amount=_amount_value(cell(2)),
+            )
+        )
+    return result
 
-        if current.amount is None and (amount := parse_amount(text)) is not None:
-            current.amount = amount
-            text = AMOUNT_RE.sub("", text, count=1).strip(" -–|·+")
-        if text:
-            if not current.title:
-                current.title = text
-            else:
-                current.note = f"{current.note} · {text}" if current.note else text
-    return [t for t in result if t.amount is not None or t.title]
+
+def parse_reserved(html: str) -> list[Reserved]:
+    """Tabelle unter "Reservierte Beträge" (inkl. "nicht zugeordnete Summe")."""
+    soup = BeautifulSoup(html, "html.parser")
+    heading = next(
+        (s for s in soup.find_all("strong") if "reservierte" in s.get_text().lower()),
+        None,
+    )
+    table = heading.find_next("table") if heading else None
+    if table is None:
+        return []
+    result: list[Reserved] = []
+    for tr in table.find_all("tr"):
+        tds = tr.find_all("td")
+        if len(tds) >= 2:
+            result.append(
+                Reserved(
+                    label=tds[0].get_text(" ", strip=True),
+                    amount=parse_amount(tds[1].get_text(" ", strip=True)),
+                )
+            )
+    return result
 
 
 def parse_dashboard(html: str) -> list[Student]:
@@ -251,6 +283,8 @@ def parse_dashboard(html: str) -> list[Student]:
     students: list[Student] = []
     student: Student | None = None
     payment: Payment | None = None
+    saldo_ids = SALDO_RE.findall(html)  # in Seitenreihenfolge, eine pro Kind
+    saldo_seen = 0
 
     def ensure_student() -> Student:
         nonlocal student
@@ -286,6 +320,11 @@ def parse_dashboard(html: str) -> list[Student]:
             payment = Payment(title=m.group("title").strip())
             ensure_student().payments.append(payment)
 
+        elif line.lower().startswith("alle transaktionen"):
+            if saldo_seen < len(saldo_ids):
+                ensure_student().account_id = saldo_ids[saldo_seen]
+            saldo_seen += 1
+
         elif payment is not None:
             if line.lower().startswith("frist"):
                 payment.due = _find_date(lines, i)
@@ -301,5 +340,10 @@ def parse_dashboard(html: str) -> list[Student]:
                 elif low.startswith("bezahlt"):
                     payment.status, payment.status_text = "paid", line
         i += 1
+
+    # Fallback: Button-Text nicht erkannt, aber genau eine ID je Kind vorhanden
+    if saldo_seen == 0 and len(saldo_ids) == len(students):
+        for s, account_id in zip(students, saldo_ids, strict=True):
+            s.account_id = account_id
 
     return students

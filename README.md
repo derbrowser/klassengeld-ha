@@ -24,7 +24,7 @@ Die Daten werden alle 30 Minuten abgerufen. Die Integration liest nur, sie bezah
 | Offene Zahlungen | Anzahl offener Aufforderungen (Attribut `payments` mit Titel, Frist, Betrag) |
 | Nächste Frist | früheste Frist einer offenen Aufforderung |
 | Projekte | Anzahl aller Projekte; Attribut `projects` mit Titel, Frist, Betrag und Status (`open` / `paid` / `unknown`), dazu die Zähler `open`, `paid`, `open_amount` |
-| Transaktionen | Anzahl aller Buchungen aus "Alle Transaktionen anzeigen"; Attribut `transactions` mit Datum, Titel, Betrag, Notiz, dazu die Summen `income` und `expenses` |
+| Transaktionen | Anzahl aller Buchungen aus "Alle Transaktionen anzeigen"; Attribut `transactions` mit Datum, Art, Betrag (negativ = Abbuchung) und Beschreibung, dazu `income`, `expenses`, `unassigned_amount` ("nicht zugeordnete Summe") und `reserved` (Zeilen aus "Reservierte Beträge") |
 | Zahlung offen | Binärsensor, an sobald mindestens eine Zahlung offen ist |
 
 Die langen Listen (`projects`, `transactions`) werden nicht in der Recorder-Datenbank gespeichert, sie sind nur im aktuellen Zustand sichtbar.
@@ -47,7 +47,7 @@ type: markdown
 title: Transaktionen
 content: >
   {% for t in (state_attr('sensor.max_mustermann_transaktionen', 'transactions') or [])[:10] %}
-  - {{ t.date }} {{ t.title }}: {{ '%.2f'|format(t.amount or 0) }} €
+  - {{ t.date }} {{ t.type }}: {{ '%.2f'|format(t.amount or 0) }} € – {{ t.description }}
   {% endfor %}
 ```
 
@@ -96,7 +96,8 @@ actions:
 
 ## Bekannte Grenzen
 
-- Die Transaktionsseite ("Alle Transaktionen anzeigen") wird über den Link im Dashboard gefunden und mit einem allgemeinen, textbasierten Parser gelesen (Datum, Titel, Betrag). Das Layout dieser Seite ist noch nicht gegen die echte Seite geprüft. Liefert der Sensor "Transaktionen" 0, bitte den Diagnose-Download anhängen, er enthält dann `transaction_page_lines`.
+- "Alle Transaktionen anzeigen" ist auf der Seite ein Button, der ein Fenster lädt (`/ajax/saldo_account/<id>`). Die Integration liest die Konto-ID aus dem Button und die Buchungen aus dem JSON der Antwort. Liefert der Sensor "Transaktionen" 0 obwohl es Buchungen gibt, bitte den Diagnose-Download anhängen (`transaction_rows`).
+- IBANs in Buchungstexten werden gekürzt (`DE89…`), auch im Diagnose-Download.
 - Das Passwort liegt, wie bei allen Integrationen mit Login, im Klartext in `.storage/core.config_entries`. Am besten ein Passwort verwenden, das du nirgends sonst nutzt.
 
 ## Hinweis
