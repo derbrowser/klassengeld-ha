@@ -67,18 +67,33 @@ class Payment:
 
 
 @dataclass
+class Transaction:
+    """Eine Buchung aus "Alle Transaktionen anzeigen"."""
+
+    date: date | None = None
+    title: str = ""
+    amount: float | None = None
+    note: str = ""
+
+
+@dataclass
 class Student:
-    """Ein Kind mit Kontostand und Zahlungsaufforderungen."""
+    """Ein Kind mit Kontostand, Projekten (Zahlungsaufforderungen) und Transaktionen."""
 
     name: str
     school_class: str | None = None
     school: str | None = None
     balance: float | None = None
     payments: list[Payment] = field(default_factory=list)
+    transactions: list[Transaction] = field(default_factory=list)
 
     @property
     def open_payments(self) -> list[Payment]:
         return [p for p in self.payments if p.status == "open"]
+
+    @property
+    def paid_payments(self) -> list[Payment]:
+        return [p for p in self.payments if p.status == "paid"]
 
 
 def parse_amount(text: str) -> float | None:
@@ -149,6 +164,85 @@ def _page_lines(html: str) -> list[str]:
 def page_lines(html: str) -> list[str]:
     """Öffentlich für Diagnose-Zwecke."""
     return _page_lines(html)
+
+
+NEXT_PAGE_TEXTS = ("nächste", "naechste", "weiter", "next", "›", "»", ">")
+
+
+def find_transaction_links(html: str, page_url: str) -> list[str]:
+    """Links zu "Alle Transaktionen anzeigen" im Dashboard (in Seitenreihenfolge)."""
+    soup = BeautifulSoup(html, "html.parser")
+    links: list[str] = []
+    for a in soup.find_all("a", href=True):
+        href = a["href"].strip()
+        if href.startswith(("#", "javascript:", "mailto:")):
+            continue
+        if "transaktion" not in a.get_text(" ", strip=True).lower():
+            continue
+        url = urljoin(page_url, href)
+        if url not in links:
+            links.append(url)
+    return links
+
+
+def find_next_page(html: str, page_url: str) -> str | None:
+    """Link zur nächsten Seite einer paginierten Transaktionsliste (oder None)."""
+    soup = BeautifulSoup(html, "html.parser")
+    a = soup.select_one("a[rel~=next][href]")
+    if a is None:
+        for cand in soup.find_all("a", href=True):
+            text = cand.get_text(" ", strip=True).lower()
+            if text in NEXT_PAGE_TEXTS and not cand["href"].startswith(("#", "javascript:")):
+                a = cand
+                break
+    if a is None:
+        return None
+    return urljoin(page_url, a["href"].strip())
+
+
+def parse_transactions(html: str) -> list[Transaction]:
+    """Transaktionsliste -> Buchungen.
+
+    Textbasiert wie das Dashboard: Jede Zeile mit einem Datum (TT.MM.JJJJ) beginnt
+    eine Buchung. Betrag und Beschreibung stehen in derselben oder den folgenden
+    Zeilen (höchstens vier), bis das nächste Datum kommt.
+    """
+    lines = _page_lines(html)
+    result: list[Transaction] = []
+    current: Transaction | None = None
+    extra = 0
+
+    for line in lines:
+        if line.lower().startswith("frist"):
+            continue
+        m = DATE_RE.search(line)
+        if m:
+            try:
+                d = datetime.strptime(m.group("d"), "%d.%m.%Y").date()
+            except ValueError:
+                d = None
+            current = Transaction(date=d)
+            result.append(current)
+            extra = 0
+            text = (line[: m.start()] + " " + line[m.end() :]).strip(" -–|·+")
+        elif current is not None and extra < 4:
+            extra += 1
+            low = line.lower()
+            if low in NEXT_PAGE_TEXTS or low.startswith(("zurück", "vorherige", "seite ")):
+                continue  # Pagination, keine Buchungsdaten
+            text = line
+        else:
+            continue
+
+        if current.amount is None and (amount := parse_amount(text)) is not None:
+            current.amount = amount
+            text = AMOUNT_RE.sub("", text, count=1).strip(" -–|·+")
+        if text:
+            if not current.title:
+                current.title = text
+            else:
+                current.note = f"{current.note} · {text}" if current.note else text
+    return [t for t in result if t.amount is not None or t.title]
 
 
 def parse_dashboard(html: str) -> list[Student]:

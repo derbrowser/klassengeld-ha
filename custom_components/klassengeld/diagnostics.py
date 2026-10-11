@@ -19,10 +19,15 @@ async def async_get_config_entry_diagnostics(
     return {
         "entry": async_redact_data(dict(entry.data), {CONF_USERNAME, CONF_PASSWORD}),
         "parsed": {
-            key: {**asdict(s), "payments": [asdict(p) for p in s.payments]}
+            key: {
+                **asdict(s),
+                "payments": [asdict(p) for p in s.payments],
+                "transactions": [asdict(t) for t in s.transactions],
+            }
             for key, s in (coordinator.data or {}).items()
         },
         # Sichtbarer Seitentext, um den Parser bei Layoutänderungen anzupassen.
         # Enthält Namen – vor dem Weitergeben prüfen.
         "page_lines": coordinator.client.last_lines,
+        "transaction_page_lines": coordinator.client.last_transaction_lines,
     }

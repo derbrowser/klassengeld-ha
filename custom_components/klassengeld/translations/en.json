@@ -27,6 +27,8 @@
       "balance": { "name": "Account balance" },
       "open_amount": { "name": "Open amount" },
       "open_count": { "name": "Open payments" },
+      "projects": { "name": "Projects" },
+      "transactions": { "name": "Transactions" },
       "next_due": { "name": "Next due date" }
     },
     "binary_sensor": {
