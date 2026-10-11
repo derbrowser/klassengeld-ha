@@ -27,6 +27,8 @@
       "balance": { "name": "Kontostand" },
       "open_amount": { "name": "Offener Betrag" },
       "open_count": { "name": "Offene Zahlungen" },
+      "projects": { "name": "Projekte" },
+      "transactions": { "name": "Transaktionen" },
       "next_due": { "name": "Nächste Frist" }
     },
     "binary_sensor": {

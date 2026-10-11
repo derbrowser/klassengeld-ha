@@ -6,8 +6,18 @@ import logging
 
 import aiohttp
 
-from .const import BASE_URL, DASHBOARD_URL, LOGIN_URL
-from .parser import Student, is_login_page, page_lines, parse_dashboard, parse_login_form
+from .const import BASE_URL, DASHBOARD_URL, LOGIN_URL, SALDO_URL
+from .parser import (
+    Student,
+    extract_tabledata,
+    is_login_page,
+    mask_rows,
+    page_lines,
+    parse_dashboard,
+    parse_login_form,
+    parse_reserved,
+    parse_transactions,
+)
 
 _LOGGER = logging.getLogger(__name__)
 TIMEOUT = aiohttp.ClientTimeout(total=30)
@@ -35,6 +45,7 @@ class KlassengeldClient:
         self._username = username
         self._password = password
         self.last_lines: list[str] = []
+        self.last_transaction_rows: dict[str, list[dict]] = {}  # für die Diagnose
 
     async def async_login(self) -> None:
         try:
@@ -70,19 +81,58 @@ class KlassengeldClient:
         except (aiohttp.ClientError, TimeoutError) as err:
             raise KlassengeldConnectionError(str(err)) from err
 
-    async def _fetch_dashboard(self) -> str:
-        async with self._session.get(DASHBOARD_URL, timeout=TIMEOUT) as resp:
+    async def _fetch_page(self, url: str) -> tuple[str, str]:
+        """Seite laden, Rückgabe: (HTML, endgültige URL nach Weiterleitungen)."""
+        async with self._session.get(url, timeout=TIMEOUT) as resp:
             if resp.status >= 500:
                 raise KlassengeldConnectionError(f"Serverfehler {resp.status}")
+            return await resp.text(), str(resp.url)
+
+    async def _fetch_saldo(self, account_id: str) -> str:
+        """Fenster "Alle Transaktionen anzeigen" (AJAX-Fragment) laden."""
+        headers = {"X-Requested-With": "XMLHttpRequest", "Referer": DASHBOARD_URL}
+        async with self._session.get(
+            SALDO_URL.format(account_id), headers=headers, timeout=TIMEOUT
+        ) as resp:
+            if resp.status >= 400:
+                raise KlassengeldConnectionError(f"Transaktionen: HTTP {resp.status}")
             return await resp.text()
+
+    async def _load_transactions(self, students: list[Student]) -> None:
+        """Transaktionen und reservierte Beträge laden. Fehler hier brechen den Rest nicht ab."""
+        self.last_transaction_rows = {}
+        for student in students:
+            if not student.account_id:
+                _LOGGER.debug("Keine Konto-ID für %s, überspringe Transaktionen", student.name)
+                continue
+            try:
+                html = await self._fetch_saldo(student.account_id)
+                if is_login_page(html):
+                    raise KlassengeldAuthError("Transaktionen nach Login nicht erreichbar")
+            except KlassengeldError as err:
+                _LOGGER.warning("Transaktionen für %s nicht lesbar: %s", student.name, err)
+                continue
+            except (aiohttp.ClientError, TimeoutError) as err:
+                _LOGGER.warning("Transaktionen für %s nicht erreichbar: %s", student.name, err)
+                continue
+            rows = extract_tabledata(html)
+            student.transactions = parse_transactions(html)
+            student.reserved = parse_reserved(html)
+            self.last_transaction_rows[student.account_id] = mask_rows(rows)
+            _LOGGER.debug(
+                "Gelesen: %s, %d Transaktionen, %d reservierte Zeilen",
+                student.name,
+                len(student.transactions),
+                len(student.reserved),
+            )
 
     async def async_get_data(self) -> list[Student]:
         try:
-            html = await self._fetch_dashboard()
+            html, url = await self._fetch_page(DASHBOARD_URL)
             if is_login_page(html):  # Sitzung abgelaufen -> neu anmelden
                 _LOGGER.debug("Sitzung abgelaufen, melde neu an")
                 await self.async_login()
-                html = await self._fetch_dashboard()
+                html, url = await self._fetch_page(DASHBOARD_URL)
                 if is_login_page(html):
                     raise KlassengeldAuthError("Dashboard nach Login nicht erreichbar")
         except (aiohttp.ClientError, TimeoutError) as err:
@@ -118,4 +168,5 @@ class KlassengeldClient:
                         p.due,
                         p.amount,
                     )
+        await self._load_transactions(students)
         return students
